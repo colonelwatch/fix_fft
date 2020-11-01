@@ -177,6 +177,20 @@ Serial.println("");*/
     return scale;
 }
 
+// Computes integer square root and replaces the Arduino-provided sqrt function, 
+// which used floating point math. Outputs reasonably for any number less than int32_t 
+// max but works fastest on smaller numbers.
+int16_t int_sqrt(int32_t val){
+  // Initial values if n = 0
+  int32_t Nsquared = 0;
+  int32_t twoNplus1 = 1;
+  while(Nsquared <= val){
+    Nsquared += twoNplus1;
+    twoNplus1 += 2;
+  }
+  return twoNplus1/2 - 1;
+}
+
 /*
   fix_fftr() - forward/inverse FFT on array of real numbers.
   Real FFT/iFFT using half-size complex FFT by distributing
@@ -191,19 +205,37 @@ Serial.println("");*/
   that fix_fft "sees" consecutive real samples as alternating
   real and imaginary samples in the complex array.
 */
-int16_t fix_fftr(int8_t f[], int16_t m, int16_t inverse)
+int16_t fix_fftr(int16_t x[], int16_t m, int16_t inverse)
 {
-    int16_t i, N = 1<<(m-1), scale = 0;
-    int8_t tt, *fr=f, *fi=&f[N];
-
-    if (inverse)
-      scale = fix_fft(fi, fr, m-1, inverse);
-    for (i=1; i<N; i+=2) {
-      tt = f[N+i-1];
-      f[N+i-1] = f[i];
-      f[i] = tt;
+    int N = 1 << (m - 1), M = 1 << m, n = m - 1;
+    int16_t x_r[N], x_i[N];
+    for(int i = 0; i < M; i += 2) x_r[i/2] = x[i];
+    for(int i = 1; i < M; i += 2) x_i[i/2] = x[i];
+    fix_fft(x_r, x_i, n, 0); // For now inverse not enabled
+    int16_t f_er[N], f_ei[N], f_or[N], f_oi[N];
+    for(int i = 0; i < N; i++){
+        f_er[i] = (x_r[i] + x_r[N-i]) / 2;
+        f_ei[i] = (x_i[i] - x_i[N-i]) / 2;
+        f_or[i] = (x_i[i] + x_i[N-i]) / 2;
+        f_oi[i] = (x_r[N-i] - x_r[i]) / 2;
     }
-    if (! inverse)
-      scale = fix_fft(fi, fr, m-1, inverse);
-    return scale;
+    int16_t X_r[M], X_i[M];
+    for(int i = 0; i < N; i++){
+        int j = (N_WAVE*i)/M;
+        int16_t wr =  pgm_read_byte_near(Sinewave + j+N_WAVE/4);
+        int16_t wi = -pgm_read_byte_near(Sinewave + j);
+        X_r[i] = f_er[i] + (f_or[i]*wr - f_oi[i]*wi) / 127;
+        X_i[i] = f_ei[i] + (f_or[i]*wi + wr*f_oi[i]) / 127;
+    }
+    int j = N_WAVE/2;
+    int16_t wr =  pgm_read_byte_near(Sinewave + j+N_WAVE/4);
+    int16_t wi = -pgm_read_byte_near(Sinewave + j);
+    X_r[N] = f_er[0] + (f_or[0]*wr - f_oi[0]*wi) / 127;
+    X_i[N] = f_ei[0] + (f_or[0]*wi + wr*f_oi[0]) / 127;
+    for(int i = N; i < M; i++){
+        X_r[i] = X_r[M-i];
+        X_i[i] = -X_i[M-i];
+    }
+    // Using x to store the output
+    for(int i = 0; i < M; i++) x[i] = int_sqrt(X_r[i]*X_r[i] + X_i[i]*X_i[i]);
 }
